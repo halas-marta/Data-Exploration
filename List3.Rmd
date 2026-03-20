@@ -1,0 +1,1326 @@
+---
+title: "lista 3"
+author: "Marta Hałas"
+date: "2025-05-20"
+output:
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+  word_document:  
+    toc: true
+    number_sections: true
+  html_document:
+    toc: true
+    df_print: paged
+    number_sections: true
+lang: pl
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+set.seed(124)
+```
+
+```{r wyniki,echo=FALSE, warning=FALSE,eval=TRUE,message=FALSE,}
+library(mlbench)
+library(DataExplorer)
+library(dplyr)
+library(ggplot2)
+library(VIM)
+library(tidyr)
+library(class)
+library(rpart)
+library(rpart.plot)
+library(e1071)
+library(ipred)
+library(kableExtra)
+```
+
+# Zadanie 2
+
+## a) Algorytmy klasyfikacji
+
+### O czym będzie analiza
+
+Analiza dotyczy zastosowania algorytmów klasyfikacji:
+
+metoda k-najbliższych sąsiadów (k-Nearest Neighbors),
+
+drzewa klasyfikacyjne (classification trees),
+
+naiwny klasyfikator bayesowski (naïve Bayes classifier)
+
+i porównania ich dokładności w zależności od podzbiorów, parmaetrów czy schematów oceny dokładności.
+
+### Opis analizy
+
+Dla spójności analizy i poprawności wniosków, ustawiłam ziarno, aby przy generowaniu na nowo pliku rmd obliczane wyniki nie zmieniły swojej wartości. 
+
+Analiza zawiera:
+
+* porównanie rozkładu klas, dyspropocji poszczególnych grup,   zmienności, zdolności dyskryminacyjnych.
+
+* porównanie  dokładności klasyfikacji algorytmów przy użyciu   różnych schematów oceny dokładności.
+
+* wpływ różnych parametrów algorytmów oraz podzbiorów cech na   dokładność klasyfikacji.
+ 
+## b) Wybór, przygotowanie i zapoznanie się z danymi
+
+### Wybór danych
+
+Dane: PimaIndiansDiabetes2
+
+```{r , warning=FALSE,eval=TRUE,message=FALSE,}
+data("PimaIndiansDiabetes2")
+data<-PimaIndiansDiabetes2
+```
+
+Do porównania metod klasyfikacji wybrałam zbiór danych PimaIndiansDiabetes2.
+
+### Zapoznanie się z danymi
+
+***Rozmiar danych:*** liczba wierszy to `r nrow(data)` , liczba kolumn to `r ncol(data)`.
+
+***Typy poszczególnych cech:***
+
+```{r , warning=FALSE, eval=TRUE}
+typy <- function(d) {
+  data.frame(names(d), sapply(d, class))
+}
+
+typy(data)
+```
+
+***Opis zmiennych***
+
+-   pregnant - liczba przebytych ciąż
+
+-   glucose - stężenie glukozy w osoczu
+
+-   pressure - ciśnienie rozkurczowe (mm Hg)
+
+-   triceps - grubość fałdu skórnego tricepsa (mm)
+
+-   insulin - insulina w surowicy 2-godzinna (mu U/ml)
+
+-   mass - maksymalny indeks ciała
+
+-   pedigree - funkcja rodowodu cukrzycy
+
+-   age - wiek (lata)
+
+-   diabetes - zmienna klasowa (test na cukrzycę)
+
+Zbiór danych PimaIndiansDiabetes2 posiada dwie klasy: 0 - brak cukrzycy 1 - obecność cukrzycy
+
+Za informacje o przynależności obkietu do konkretnej klasy odpowiada zmienna ***diabetes*** i zawiera wartości "pos" (positive – cukrzyca) oraz "neg" (negative – brak cukrzycy).
+
+***Zmienne ciągłe***
+
+```{r  , warning=FALSE, eval=TRUE}
+a<-split_columns(data)$continuous
+names(a)
+```
+
+***Zmienne dyskretne***
+
+```{r  , warning=FALSE, eval=TRUE}
+b<-split_columns(data)$discrete
+names(b)
+
+```
+
+Wszystkie zmienne mają prawidłowo przypisane typy. Zmienna zawierająca etykietki klas jest zmienną typu factor. Reszta zmiennych jest typu numeric, co jest zgodne z intuicją.
+
+***Przydatność w analizie***: wszytskie zmienne są przydatne w analizie. Wykorzytsam je do wysunięcia ciekawych wniosków.
+
+### Brakujące obserwacje - nietypowe własności danych
+
+***Liczba NA - brakujących obserwacji*** - Liczba braków danych kodowanych za pomocą "NA" wynosi `r sum(is.na(data))`.
+
+```{r ,warning=FALSE, eval=TRUE, results='asis'}
+a<-colSums(is.na(data))
+kable(a, col.names = "Ilość brakujących danych")
+```
+
+Brakujące dane są tylko dla zmiennych typu numeric.
+
+```{r , warning=FALSE, eval=TRUE,message=FALSE,fig.align="center", fig.width=12, fig.height=10,fig.show='hide'}
+p<-plot_missing(data)
+```
+
+```{r , warning=FALSE,message=FALSE, eval=TRUE,fig.align="center", fig.width=12, fig.height=10}
+p + scale_fill_manual(values = c('orchid1','darkorchid3',"blue"))
+```
+
+Do dalszej analizy potrzebne jest pominięcie wartości NA lub zastąpienie ich wartościami liczbowymi. Usunięcie (czyli pominięcie) wierszy zawierających NA, powoduje utratę wielu obserwacji. Zatem zastosujemy metodę "KNN" - dla 5 sąsiadów.
+
+```{r , warning=FALSE, eval=TRUE}
+data<-kNN(data,variable=colnames(data),k=5,imp_var = FALSE)
+```
+
+## c) Wstępna analiza danych
+
+### Rozkład klas - dysproporcje, błąd klasyfikacji
+
+```{r , warning=FALSE, eval=TRUE}
+a <- table(PimaIndiansDiabetes2$diabetes)
+a_df <- as.data.frame(a)
+a_df$Procent <- round((a_df$Freq / sum(a_df$Freq)) * 100, 2)
+
+kable(a_df, col.names = c("Etykiety klas", "Liczebność", "Liczebność w %"))
+
+
+ggplot(PimaIndiansDiabetes2, aes(x = diabetes, fill = diabetes)) +
+  geom_bar(width = 0.5) +
+  scale_fill_manual(values = c("pos" = "orchid", "neg" = "darkorchid3")) +
+  labs(
+    title = "Liczebność klas",
+    x = "Klasa",
+    y = "Liczba przypadków"
+  ) +
+  theme_minimal()
+
+```
+
+Zauważamy dysproporcje klas, jest ona jednak umiarkowana około 65% (klasa "neg") do około 35% (klas "pos"). Dużą dysproporcją byłą by róznica na poziomie 95% do 5%.
+
+Najczęściej występująca klasą jest klasa "neg".
+
+Bład klasyfikacji przypsiania wszytskich obiektów do klasy "neg" jest na poziomie `r round((sum(data$diabetes=="pos")/nrow(data)*100),2)`% co odpowiada procentowej liczebności klasy "pos".
+
+### Zmienność poszczególnych cech
+
+```{r , warning=FALSE, eval=TRUE}
+data1<-select_if(data,is.numeric)
+ boxplot(data1,las=3,col=cm.colors(17),
+ main="Dane PimaIndiansdiabetes2 - wykresypudełkowe\ndlaposzczególnychcech",
+ cex.axis=0.7)
+```
+
+Na powyższym wykresie zauważamy dużą rozbieżność miedzy zakresami zmienności poszczególnych cech.
+
+```{r , warning=FALSE, eval=TRUE}
+wariancja<-round(sapply(data1,var),2)
+kable(wariancja, col.names = "wariancje zmiennych")
+```
+
+Zmienna glucose oraz insulin posiadają wysoką wariancję (odpowiednio 9357, 929.78) w porównaniu z niewielką zmiennością cechy pedigree - 0.11 czy z wariancją zmiennej pregnant - 11.35.
+
+Konieczne będzie zastosowanie standaryzacji dla alogorytmu KNN.
+
+### Zdolności dyskryminacyjne
+
+```{r , warning=FALSE, eval=TRUE}
+data2<- data %>%
+  pivot_longer(cols = -diabetes, names_to = "cecha", values_to = "wartosc")
+
+ggplot(data2, aes(x = diabetes, y = wartosc, fill = diabetes)) +
+  geom_boxplot() +
+  facet_wrap(~ cecha, scales = "free") +
+  scale_fill_manual(values = c("pos" = "orchid", "neg" = "darkorchid3")) +
+  labs(
+    title = "Zdolności dyskryminacyjne zmiennych",
+    x = "Klasy zmiennej diabetes",
+    y = "Wartość cechy"
+  ) +
+  theme_minimal()
+```
+
+Cecha ***glucose*** i ***insulin*** charaktaryzują się najlepszymi zdolnościami predykcyjnimi na tle innych zmiennych.
+
+Warto wspomieć, że żadna z cech nie osiąga 100% zdolności do dyskryminacji.
+
+Najgorszą zdolność mają cechy takie jak ***pressure***, ***triceps***, ***pedigree***,  czy ***pregnat***.
+
+## d) Prównanie algorytmów - dokładność klasyfikacji na zbiorze uczącym i testowym 
+
+### Zbiór uczący i testowy
+
+_**Zbiór uczący i testowy**_
+
+Tworzymy ***zbiór uczący*** i ***testowy***.
+
+```{r , warning=FALSE, eval=TRUE}
+n<-dim(data)[1]
+data.los<-sample(1:n,2/3*n)
+liczba<-n-length(data)
+uczący<-data[data.los,]
+testowy<-data[-data.los,]
+```
+
+Liczba przypadków w zbiorze uczącym to `r length(data.los)`, a w zbiorze testowym `r liczba`.
+
+### Algorytm KNN
+
+***Algorytm KNN***
+
+Algorytm ten jak wspomniałam wyżej wymaga standaryzacji danych.
+
+```{r , warning=FALSE, eval=TRUE}
+uczący1<-scale(uczący[1:8])
+uczący2<-data.frame(uczący1, diabetes=uczący$diabetes)
+
+testowy1<-scale(testowy[1:8])
+testowy2<-data.frame(testowy1, diabetes=testowy$diabetes)
+```
+
+Zastosuję algorytm KNN dla wszystkich cech ze zbioru danych PimaIndiansdiabetes2, przyjmując k=5.
+
+```{r , warning=FALSE, eval=TRUE}
+etykietki <- testowy2$diabetes
+etykietki.prog <- knn(uczący2[,-9], testowy2[,-9], uczący2$diabetes, k=5)
+```
+
+***Zbiór testowy***
+
+***Macierz pomyłek***
+
+```{r , warning=FALSE, eval=TRUE}
+wynik.tablica <- table(etykietki.prog,etykietki)
+rownames(wynik.tablica) <- c("prognozowany neg", "prognozowany pos")
+colnames(wynik.tablica) <- c("rzeczywisty neg", "rzeczywisty pos")
+kable(wynik.tablica, caption = "Macierz pomyłek dla zbioru testowego")
+```
+
+***Błąd klasyfikacji***
+
+```{r , warning=FALSE, eval=TRUE}
+n.test <- dim(testowy2)[1]
+a<-(n.test - sum(diag(wynik.tablica))) / n.test
+```
+
+Błąd klasyfikacji na zbiorze testowym wynosi `r round(a,4)`, czyli `r paste0(round(a,4)*100,"%")` próbek było sklasyfikowanych błędnie.
+
+***Zbiór uczący***
+
+***Macierz pomyłek ***
+
+```{r , warning=FALSE, eval=TRUE}
+etykietki <- uczący2$diabetes
+etykietki.prog <- knn(uczący2[,-9], uczący2[,-9], uczący2$diabetes, k=5)
+wynik.tablica <- table(etykietki.prog,etykietki)
+rownames(wynik.tablica) <- c("prognozowany neg", "prognozowany pos")
+colnames(wynik.tablica) <- c("rzeczywisty neg", "rzeczywisty pos")
+kable(wynik.tablica, caption = "Macierz pomyłek dla zbioru uczącego")
+```
+
+***Błąd klasyfikacji***
+
+```{r , warning=FALSE, eval=TRUE}
+n.test <- dim(uczący2)[1]
+b<-(n.test - sum(diag(wynik.tablica))) / n.test
+```
+
+Błąd klasyfikacji na zbiorze uczącym wynosi `r round(b,4)`, czyli `r paste0(round(b,4)*100,"%")`próbek było sklasyfikowanych błędnie.
+
+***Wnioski***
+
+Błąd klasyfikacji na zbiorze uczącym jest mniejszy niż na zbiorze testowym, co jest zgodne z oczekiwaniami, ponieważ model, który był trenowany na zbiorze uczącym można powiedzieć, że "nauczył" się lepszego rozwiązania dla konkretnych  wcześniej mu znanych danych.
+
+### Algorytm drzewa klasyfikacyjnego 
+***Konstrukacja drzewa klasyfikacyjnego***
+
+```{r , warning=FALSE, eval=TRUE,fig.align="center"}
+model<- diabetes ~ . 
+Indians.tree <- rpart(model, data=uczący)
+rpart.plot(Indians.tree,box.palette = "PuBu", main="Drzewo klasyfikacyjne dla danych PimaIndiansdiabetes2")
+```
+
+```{r , warning=FALSE, eval=TRUE}
+etykietki <- predict(Indians.tree, newdata=uczący, type = "class")
+
+etykietki.prog <- predict(Indians.tree, newdata=testowy, type = "class")
+```
+
+***Zbiór testowy***
+
+***Macierz pomyłek***
+
+```{r , warning=FALSE, eval=TRUE}
+wynik.tablica <- table(etykietki.prog, testowy$diabetes)
+rownames(wynik.tablica) <- c("prognozowany neg", "prognozowany pos")
+colnames(wynik.tablica) <- c("rzeczywisty neg", "rzeczywisty pos")
+kable(wynik.tablica, caption = "Macierz pomyłek dla zbioru testowego")
+```
+
+***Błąd klasyfikacji***
+
+```{r , warning=FALSE, eval=TRUE}
+n.test <- dim(testowy)[1]
+c<-(n.test - sum(diag(wynik.tablica))) / n.test
+```
+
+Błąd klasyfikacji na zbiorze testowym wynosi `r round(c,4)`, czyli `r paste0(round(c,4)*100,"%")` próbek było sklasyfikowanych błędnie.
+
+***Zbiór uczący***
+
+***Macierz pomyłek***
+
+```{r , warning=FALSE, eval=TRUE}
+wynik.tablica <- table(etykietki, uczący$diabetes)
+rownames(wynik.tablica) <- c("prognozowany neg", "prognozowany pos")
+colnames(wynik.tablica) <- c("rzeczywisty neg", "rzeczywisty pos")
+kable(wynik.tablica, caption = "Macierz pomyłek dla zbioru uczącego")
+```
+
+***Błąd klasyfikacji***
+
+```{r , warning=FALSE, eval=TRUE}
+n.test <- dim(uczący)[1]
+d<-(n.test - sum(diag(wynik.tablica))) / n.test
+```
+
+Błąd klasyfikacji na zbiorze uczącym wynosi `r round(d,4)`, czyli `r paste0(round(d,4)*100,"%")` próbek było sklasyfikowanych błędnie.
+
+***Wnioski***
+
+Błąd klasyfikacji na zbiorze uczącym jest mniejszy niż na zbiorze testowym, co jest zgodne z oczekiwaniami, ponieważ model, który był trenowany na zbiorze uczącym można powiedzieć, że "nauczył" się lepszego rozwiązania dla konkretnych  wcześniej mu znanych danych.
+
+### Algorytm naiwnnego klasyfikatora bayesowskiego
+
+Budujemy model korzystając z funkcji naiveBayes.
+
+```{r , warning=FALSE, eval=TRUE}
+model<- naiveBayes(diabetes~., data = uczący)
+```
+
+```{r , warning=FALSE, eval=TRUE}
+etykietki <- predict(model, newdata=uczący, type = "class")
+
+etykietki.prog <- predict(model, newdata=testowy)
+```
+
+***Zbiór testowy***
+
+***Macierz pomyłek***
+
+```{r , warning=FALSE, eval=TRUE}
+wynik.tablica <- table(etykietki.prog, testowy$diabetes)
+rownames(wynik.tablica) <- c("prognozowany neg", "prognozowany pos")
+colnames(wynik.tablica) <- c("rzeczywisty neg", "rzeczywisty pos")
+kable(wynik.tablica, caption = "Macierz pomyłek dla zbioru testowego")
+```
+
+***Błąd klasyfikacji***
+
+```{r , warning=FALSE, eval=TRUE}
+n.test <- dim(testowy)[1]
+e<-(n.test - sum(diag(wynik.tablica))) / n.test
+```
+
+Błąd klasyfikacji na zbiorze testowym wynosi `r round(e,4)`, czyli `r paste0(round(e,4)*100,"%")` próbek było sklasyfikowanych błędnie.
+
+***Zbiór uczący***
+
+***Macierz pomyłek***
+
+```{r , warning=FALSE, eval=TRUE}
+wynik.tablica <- table(etykietki, uczący$diabetes)
+rownames(wynik.tablica) <- c("prognozowany neg", "prognozowany pos")
+colnames(wynik.tablica) <- c("rzeczywisty neg", "rzeczywisty pos")
+kable(wynik.tablica, caption = "Macierz pomyłek dla zbioru uczącego")
+```
+
+***Błąd klasyfikacji***
+
+```{r , warning=FALSE, eval=TRUE}
+n.test <- dim(uczący)[1]
+f<-(n.test - sum(diag(wynik.tablica))) / n.test
+```
+
+Błąd klasyfikacji na zbiorze uczącym wynosi `r round(f,4)`, czyli `r paste0(round(f,4)*100,"%")` próbek było sklasyfikowanych błędnie.
+
+***Wnioski***
+
+Błąd klasyfikacji na zbiorze uczącym jest mniejszy niż na zbiorze testowym, co jest zgodne z oczekiwaniami, ponieważ model, który był trenowany na zbiorze uczącym można powiedzieć, że "nauczył" się lepszego rozwiązania dla konkretnych  wcześniej mu znanych danych. Zauważamy jednak, że różnica między poszczególnymi błędami jest niewielka, o wiele mniejsza niż w przypadku algorytmu KNN czy drzew klasyfikacyjnych.
+
+### Wnioski
+
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumn1=c(paste0(round(a,4)*100,"%"),paste0(round(c,4)*100,"%"),paste0(round(e,4)*100,"%")),kolumna2=c(paste0(round(b,4)*100,"%"),paste0(round(d,4)*100,"%"),paste0(round(f,4)*100,"%")))
+rownames(tabela)<-c("KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny na zbiorze testowym i uczącym odpowiednich algorytmów", col.names=c("zbiór testowy","zbiór uczący"))
+```
+
+
+Największą różnicę między błędem klasyfikacyjnym na zbiorze uczącym, a testowym widzimy dla algorytmu drzew klasyfikacyjnych. Podobnie zarówno na zbiorze testowym jak i uczącym poradził sobie naiwny klasyfikator bayesowski. Algorytm KNN daje wyniki na obu zbiorach zbliżone odpowiedno do tych otrzymany po zastosowaniu alkorytmu drzew klasyfikacyjnych.
+
+## d') Prównanie algorytmów - dokładność klasyfikacji zaawansowanych metod 
+
+### Zaawansowany schemat oceny dokładności
+
+Przygotowuje "wrapper" dostosowując funkcję predict dla modelu do standardu wymaganego przez funkcję "errorest".
+
+```{r , warning=FALSE, eval=TRUE}
+
+my.predict  <- function(model, newdata) 
+{ predict(model, newdata=newdata, type="class") }
+
+my.naiveBayes <- function(formula, data) 
+{ naiveBayes(formula=formula,data=data)} 
+
+my.ipredknn <- function(formula1, data1, ile.sasiadow) {ipredknn(formula=formula1,data=data1,k=ile.sasiadow)}
+
+my.tree<-function(formula, data) {rpart(formula=formula,data=data)}
+
+
+```
+
+### Algorytm KNN 
+***Algorytm KNN***
+
+Konieczne jest zastosowanie standrayzacji danych dla algorytmu KNN.
+
+```{r , warning=FALSE, eval=TRUE}
+datas<-scale(data[1:8])
+datas<-data.frame(datas, diabetes=data$diabetes)
+```
+
+***Metoda cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+
+g<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=5)
+g
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+h<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",   est.para=control.errorest(nboot = 50), ile.sasiadow=5)
+h
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+i<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus",   est.para=control.errorest(nboot = 50), ile.sasiadow=5)
+i
+```
+
+***Wnioski - algorytm KNN***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(wartosc=(paste0(round(c(g$error,h$error,i$error),4)*100,"%")))
+rownames(tabela)<-c("cross-validation","bootstrap","632+")
+kable(tabela, caption = "Błąd klasyfikacyjny algorytmu KNN",col.names = "wartość w %")
+```
+
+Największy błąd klasyfikacyjny dla algorytmu KNN otrzymujemy stosując schemat typu bootstrap, najmniejszy błąd, czyli najlepsze dopasowanie danych dla schematu 632+. 
+
+### Algorytm drzew klasyfikacyjnych
+
+***Algorytm drzew klasyfikacyjnych***
+
+***metoda cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+j<-errorest(diabetes ~., data, model=my.tree,predict=my.predict, estimator="cv",est.para=control.errorest(k = 10))
+j
+```
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+k<-errorest(diabetes ~., data, model=my.tree, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50))
+k
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+l<-errorest(diabetes ~., data, model=my.tree, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50))
+l
+```
+
+***Wnioski - algorytm drzew klasyfikacyjnych***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(wartosc=(paste0(round(c(j$error,k$error,l$error),4)*100,"%")))
+rownames(tabela)<-c("cross-validation","bootstrap","632+")
+kable(tabela, caption = "Błąd klasyfikacyjny algorytmu drzew klasyfikacyjnych",col.names = "wartość w %")
+```
+
+Najlepiej sprawdzającym się schematem dla algorytmu drzew klasyfikacyjnych jest cross-validation - otrzymujemy najmniejszy błąd klasyfikacyjny. Największy błąd otrzymujemy przy zastosowaniu metody bootstrap, drugie miejsce zajmuje schemat 632+.
+
+### Algorytm naiwnnego klasyfikatora bayesowskiego
+
+***Algorytm naiwnnego klasyfikatora bayesowskiego***
+
+***Metoda cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+m<-errorest(diabetes~., data, model=my.naiveBayes, predict=my.predict, 
+            estimator="cv", est.para=control.errorest(k = 10))
+m
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+o<-errorest(diabetes~., data, model=my.naiveBayes, predict=my.predict, 
+            estimator="boot", est.para=control.errorest(nboot= 50))
+o
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+p<-errorest(diabetes~., data, model=my.naiveBayes, predict=my.predict, 
+            estimator="632plus", est.para=control.errorest(nboot= 50))
+p
+```
+
+***Wnioski - algorytm naiwnnego klasyfikatora bayesowskiego***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(wartosc=(paste0(round(c(m$error,o$error,p$error),4)*100,"%")))
+rownames(tabela)<-c("cross-validation","bootstrap","632+")
+kable(tabela, caption = "Błąd klasyfikacyjny algorytmu naiwnnego klasyfikatora bayesowskiego",col.names = "wartość w %")
+```
+
+Najlepszym schematem dla naiwnnego klasyfikatora bayesowskiego okazał się schemat typu bootstrap, najgorszym 632+. Trzeba jednak zwrócić uwagę na to, że każdy ze schematów zwraca zbliżone wyniki, w skrajnym przypadku różnica między błędami klasyfikacji wynosi 0.16%.
+
+### Wnioski
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(g$error,j$error,m$error),4)*100,"%"),kolumn2=paste0(round(c(h$error,k$error,o$error),4)*100,"%"),kolumna3=paste0(round(c(i$error,l$error,p$error),4)*100,"%"))
+rownames(tabela)<-c("KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów", col.names=c("cross-validation","bootstrap","632+"))
+```
+
+Schemat cross-validation, bootstrap jak i 632+ okazał się najlepszy dla algorytmu drzew klasyfikacyjnych. Największy błąd klasyfikacyjny otrzymaliśmy dla algorytmu KNN i zastosowanej metody bootstrap. Schemat 632+ oraz cross-validation okazał się najgorszy dla algorytmu naiwnego klasyfikatora bayesowskiego.
+
+## d") Wnioski - podsumowanie i porównanie wyniosków otrzymanych z podpunktów d) oraz d')
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(g$error,j$error,m$error),4)*100,"%"),kolumn2=paste0(round(c(h$error,k$error,o$error),4)*100,"%"),kolumna3=paste0(round(c(i$error,l$error,p$error),4)*100,"%"))
+rownames(tabela)<-c("KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów ", col.names=c("cross-validation","bootstrap","632+"))
+```
+
+
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumn1=paste0(round(c(a,c,e),4)*100,"%"),kolumna2=paste0(round(c(b,d,f),4)*100,"%"))
+rownames(tabela)<-c("KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny na zbiorze testowym i uczącym odpowiednich algorytmów", col.names=c("zbiór testowy","zbiór uczący"))
+```
+
+Najmniejszy błądy klasyfikacyjny otrzymujemy na zbiorze uczącym dla algorytmu drzew klasyfikacyjnych. Również dla przetestowanych schematów: cross-validation, bootstrap, 632+ ten algorytm uplasował się najlepiej tzn. otrzymaliśmy najmniejsze błędy klasyfikacyjne. Największe błędy notujemy dla naiwnego klasyfikatora bayesowskiego zarówno na zbiorze uczącym jak i używając schematu cross-validation, 632+. Algorytm KNN osiągnał najmniejszy błąd klasyfikacji na zbiorze testowym, a największy uzyskaliśmy testując algorytm drzew klasyfikacyjnych. Stosując dla algorytmu KNN schemat typu bootstrap otrzymujemy największy możliwy błąd klasyfikacji z porównywanych błędów otrzymanych przy tym schemacie.Wyniki dla naiwnego klasyfikatora bayesowskiego są bardzo do siebie podobne, te otrzymane na zbiorze testowym, uczącym  do tych uzyskanych przy użyciu schematów bootstrap, cross-validation, 632+. Oscylują one między 23.83%-24.16%.
+
+## e) Porównanie dokładości klasyfikacji uwzględniając różne podzbiory cech
+
+### Algorytm KNN
+
+***1) Podzbiór zawierający wyszystkie zmienie***
+
+Wykorzystam wyniki z podpunktu d') do porównania, aby nie powielać identycznych obliczeń.
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(g$error),4)*100,"%"),kolumn2=paste0(round(c(h$error),4)*100,"%"),kolumna3=paste0(round(c(i$error),4)*100,"%"))
+rownames(tabela)<-c("KNN")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów", col.names=c("cross-validation","bootstrap","632+"))
+```
+
+***2) Podzbiór zawierający zmienne glucose i insulin***
+
+Konieczne jest zastosowanie standrayzacji danych dla algorytmu KNN.
+
+```{r , warning=FALSE, eval=TRUE}
+datas<-scale(data[,c(2,5)])
+datas<-data.frame(datas, diabetes=data$diabetes)
+```
+
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+
+a<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=5)
+a
+```
+
+***Schemat bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+
+b<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50), ile.sasiadow=5)
+b
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+
+c<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50), ile.sasiadow=5)
+c
+```
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(a$error),4)*100,"%"),kolumn2=paste0(round(c(b$error),4)*100,"%"),kolumna3=paste0(round(c(c$error),4)*100,"%"))
+rownames(tabela)<-c("KNN")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru: insulin, glucose", col.names=c("cross-validation","bootstrap","632+"))
+```
+
+Dla algorytmu KNN najlepiej wypadł schemat 632+ - najmniejszy błąd klasyfikacyjny, największy błąd klasyfikacyjny notujemy dla schematu typu bootstrap.
+
+***3) Podzbiór niezawierający zmiennych triceps pressure, pregnant oraz pedigree. (z podpunktu c otrzyamliśmy, że te zmienne najbardziej wypływają - zwiększają błąd klasywikacyjny)***
+
+```{r , warning=FALSE, eval=TRUE}
+datas<-scale(data[,-c(1,4,3,7,9)])
+datas<-data.frame(datas, diabetes=data$diabetes)
+```
+
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+
+d<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=5)
+d
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+
+e<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50), ile.sasiadow=5)
+e
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+
+f<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50), ile.sasiadow=5)
+f
+```
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(d$error),4)*100,"%"),kolumn2=paste0(round(c(e$error),4)*100,"%"),kolumna3=paste0(round(c(f$error),4)*100,"%"))
+rownames(tabela)<-c("KNN")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru nie zawierającego zmiennych: triceps, pressure, pedigree, pregnant", col.names=c("cross-validation","bootstrap","632+"))
+```
+Najlepiej dla KNN tego podzbioru danych wypadł schemat cross-validation - najmniejszy błąd klasyfikacyjny. Największy błąd klasyfikacyjny notujemy dla schematu typu bootstrap.
+
+### Algorytm drzew klasyfikacyjnych
+
+***1) Podzbiór zawierający wyszystkie zmienie***
+
+Wykorzystam wyniki z podpunktu d') do porównania, aby nie powielać identycznych obliczeń.
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(j$error),4)*100,"%"),kolumn2=paste0(round(c(k$error),4)*100,"%"),kolumna3=paste0(round(c(l$error),4)*100,"%"))
+rownames(tabela)<-c("drzewa klasyfikacyjne")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów", col.names=c("cross-validation","bootstrap","632+"))
+```
+
+
+***2) Podzbiór zawierający zmienne glucose i insulin***
+
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+aa<-errorest(diabetes ~., data[,c(2,5,9)], model=my.tree, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10))
+aa
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+bb<-errorest(diabetes ~., data[,c(2,5,9)], model=my.tree, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50))
+bb
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+cc<-errorest(diabetes ~., data[,c(2,5,9)], model=my.tree, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50))
+cc
+```
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(aa$error),4)*100,"%"),kolumn2=paste0(round(c(bb$error),4)*100,"%"),kolumna3=paste0(round(c(cc$error),4)*100,"%"))
+rownames(tabela)<-c("drzewa klasyfikacyjne")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru: insulin, glucose", col.names=c("cross-validation","bootstrap","632+"))
+```
+Dla algorytmu drzew klasyfikacyjnych najlepiej (dla tego podzbioru danych) wypadł schemat cross-validation - najmniejszy błąd klasyfikacyjny. Największy błąd klasyfikacyjny notujemy dla schematu typu bootstrap.
+
+***3) Podzbiór niezawierający zmiennych triceps pressure, pregnant oraz pedigree. (z podpunktu c otrzyamliśmy, że te zmienne najbardziej wypływają - zwiększają błąd klasywikacyjny)***
+
+
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+dd1<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=my.tree, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10))
+dd1
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+ee<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=my.tree, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50))
+ee
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+ff<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=my.tree, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50))
+ff
+```
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(dd1$error),4)*100,"%"),kolumn2=paste0(round(c(ee$error),4)*100,"%"),kolumna3=paste0(round(c(ff$error),4)*100,"%"))
+rownames(tabela)<-c("drzewa klasyfikacyjne")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru nie zawierającego zmiennych: triceps, pressure, pedigree, pregnant", col.names=c("cross-validation","bootstrap","632+"))
+```
+Najlepiej dla tego podzbioru danych i algorytmu drzew klasyfikacyjnych wypadł schemat 632+ - najmniejszy błąd klasyfikacyjny. Największy błąd klasyfikacyjny notujemy dla schematu typu cross-validation.
+
+### Algorytm naiwnnego klasyfikatora bayesowskiego
+
+***1) Podzbiór zawierający wyszystkie zmienie***
+
+Wykorzystam wyniki z podpunktu d') do porównania, aby nie powielać identycznych obliczeń.
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(m$error),4)*100,"%"),kolumn2=paste0(round(c(o$error),4)*100,"%"),kolumna3=paste0(round(c(p$error),4)*100,"%"))
+rownames(tabela)<-c("naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów", col.names=c("cross-validation","bootstrap","632+"))
+```
+
+
+***2) Podzbiór zawierający zmienne glucose i insulin***
+
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+aaa<-errorest(diabetes ~., data[,c(2,5,9)], model=my.naiveBayes, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10))
+aaa
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+bbb<-errorest(diabetes ~., data[,c(2,5,9)], model=my.naiveBayes, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50))
+bbb
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+ccc<-errorest(diabetes ~., data[,c(2,5,9)], model=my.naiveBayes, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50))
+ccc
+```
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(aaa$error),4)*100,"%"),kolumn2=paste0(round(c(bbb$error),4)*100,"%"),kolumna3=paste0(round(c(ccc$error),4)*100,"%"))
+rownames(tabela)<-c("naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru: insulin, glucose", col.names=c("cross-validation","bootstrap","632+"))
+```
+Najlepiej dla tego podzbioru danych i naiwnego algorytmu bayesowskiego wypadł schemat cross-validation  - najmniejszy błąd klasyfikacyjny. Największy błąd klasyfikacyjny notujemy dla schematu typu bootstrap. Trzeba jednak zwrócić uwagę, że dla wszytskich schematów wynik jest niemalże identyczny. Różnica między błędem klasyfikacji dla schematu typu bootstrap, a schematu 632+ jest na poziomie 0.06%.
+
+***3) Podzbiór niezawierający zmiennych triceps pressure, pregnant oraz pedigree. (z podpunktu c otrzyamliśmy, że te zmienne najbardziej wypływają - zwiększają błąd klasywikacyjny)***
+
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+ddd<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=my.naiveBayes, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+ddd
+```
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+eee<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=my.naiveBayes, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot=50))
+eee
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+fff<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=my.naiveBayes, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot=50))
+fff
+```
+ 
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=paste0(round(c(ddd$error),4)*100,"%"),kolumn2=paste0(round(c(eee$error),4)*100,"%"),kolumna3=paste0(round(c(fff$error),4)*100,"%"))
+rownames(tabela)<-c(" naiwny klasyfikator bayesowski")
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru nie zawierającego zmiennych: triceps, pressure, pedigree, pregnant", col.names=c("cross-validation","bootstrap","632+"))
+```
+Najlepiej dla tego podzbioru danych i naiwnego algorytmu bayesowskiego wypadł schemat 632+  - najmniejszy błąd klasyfikacyjny. Największy błąd klasyfikacyjny notujemy dla schematu cross-validation. Trzeba jednak zwrócić uwagę, że dla wszytskich schematów wynik jest niemalże identyczny. Różnica między błędem klasyfikacji dla schematu typu bootstrap, a schematu cross-validation jest na poziomie 0.06%.
+
+### Wnioski
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna=c("Cały zbiór", "","","Podzbiór ze zmiennymi insuline,glucose","","","Podzbiór bez zmiennych tricpes,pedigree,pregnant,pressure","",""),kolumnap=c("KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski","KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski","KNN","drzewa klasyfikacyjne","naiwny klasyfikator bayesowski"),kolumna1=c(paste0(round(c(g$error),4)*100,"%"),paste0(round(c(j$error),4)*100,"%"),paste0(round(c(m$error),4)*100,"%"),paste0(round(c(a$error),4)*100,"%"),paste0(round(c(aa$error),4)*100,"%"),paste0(round(c(aaa$error),4)*100,"%"),paste0(round(c(d$error),4)*100,"%"),paste0(round(c(dd1$error),4)*100,"%"),paste0(round(c(ddd$error),4)*100,"%")),
+                   
+kolumn2=c(paste0(round(c(h$error),4)*100,"%"),paste0(round(c(k$error),4)*100,"%"),paste0(round(c(o$error),4)*100,"%"),paste0(round(c(b$error),4)*100,"%"),paste0(round(c(bb$error),4)*100,"%"),paste0(round(c(bbb$error),4)*100,"%"),paste0(round(c(e$error),4)*100,"%"),paste0(round(c(ee$error),4)*100,"%"),paste0(round(c(eee$error),4)*100,"%")),
+
+kolumna3=c(paste0(round(c(i$error),4)*100,"%"),paste0(round(c(l$error),4)*100,"%"),paste0(round(c(p$error),4)*100,"%"),paste0(round(c(c$error),4)*100,"%"),paste0(round(c(cc$error),4)*100,"%"),paste0(round(c(ccc$error),4)*100,"%"),paste0(round(c(f$error),4)*100,"%"),paste0(round(c(ff$error),4)*100,"%"),paste0(round(c(fff$error),4)*100,"%")))
+
+kable(tabela, caption = "Błąd klasyfikacyjny odpowiednich algorytmów dla podzbioru nie zawierającego zmiennych: triceps, pressure, pedigree, pregnant", col.names=c("zbiór","schemat","cross-validation","bootstrap","623+"))
+```
+Na całym zbiorze zmiennych oraz na podzbiorze zawierającym zmienne insulinę i glucose najmniejszy błąd klasyfikacyjny otrzymaliśmy dla algorytmu drzew klasyfikacyjnych stosując schemat cross-validation. Największy błąd klasyfikacji na tych zbiorach należy do algorytmu KNN i schematu bootstrap. Na zbiorze danych bez zmiennych triceps, pedigree, pregnant, pressure najlepszy okazał się algorytm drzew klasyfikacyjnych dla schematu 632+, drugi pod względem najmniejszego błędu klasyfikacji w tym zbiorze jest algorytm KNN dla schematu cross-validation. Tym razem również KNN i schemat bootstrap jest odpowiedzialny za największy błąd klasyfikacyjny na badanym zbiorze, Największe, zauważalne błędy klasyfikacji notujemy dla zbioru zawierającego tylko zmienne glucose oraz insulin. W tym zbiorze błąd klasyfikacji każdego z algorytmów niezależnie od schematu uległ znacznemu pogorszeniu tzn. wzrósł. Zbiorem dla którego notujemy najmniejsze błędy klasyfikacyjne dla badanych algorytmów i schematów jest zbiór bez zmiennych triceps, pedigree, pregnant oraz pressure. Ciekawą obserwacja jest również, że nie zależnie od wybranego podzbioru czy zbioru wyniki uzyskane dla naiwnego algorytmu bayseowskiego bez względu na wybrany schemat są prawie identyczne : cały zbiór - około 24%, podzbiór ze zmienną insuline,glucose - około 26%, podzbiór bez zmiennych
+ tricpes, pedigree, pregnant, pressure - około 23.5%.
+
+## e') Nietuzinkowy dobór parametrów dla poszczególnych metod 
+
+Do porównania metod wykorzystam podzbiór, dla którego błąd klasyfikacyjny dla 3 algorytmów okazał się najmniejszy.
+
+```{r , warning=FALSE, eval=TRUE}
+datas<-scale(data[,-c(1,3,4,7,9)])
+datas<-data.frame(datas, diabetes=data$diabetes)
+```
+
+### Algorytm KNN
+
+_***Algorytm KNN***_
+
+***Schemat cross-validation***
+
+Dla 3 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+a<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=3)
+a
+```
+
+Dla 7 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+b<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=7)
+b
+```
+
+Dla 11 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+c<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=10)
+c
+```
+
+Dla 15 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+d<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv",     est.para=control.errorest(k = 10), ile.sasiadow=15)
+d
+```
+
+```{r , warning=FALSE, eval=TRUE}
+set.seed(124)
+liczba.sasiadow.zakres <- 1:15
+wyniki1 <-  sapply(liczba.sasiadow.zakres, function(k)
+errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="cv", est.para=control.errorest(k=10), ile.sasiadow=k)$error)
+plot(liczba.sasiadow.zakres, type="b", wyniki1, lwd=2,col="orchid1", main="wpływ liczby sąsiadów na błąd klasyfikacji", xlab="k (liczba sąsiadów)", ylab="błąd klasyfikacji")
+```
+
+Zauważamy dużą różnicę w wartości błędu klasyfikacji między małą liczbą sąsiadów, a coraz to większą. Im większa liczba (3-10) sąsiadów tym mniejszy błąd klasyfikacji.
+
+***Schemat typu bootstrap***
+
+Dla 3 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+f<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot = 50), ile.sasiadow=3)
+f
+```
+
+Dla 7 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+g<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot = 50), ile.sasiadow=7)
+g
+```
+
+Dla 11 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+h<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot = 50), ile.sasiadow=11)
+h
+```
+
+Dla 15 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+i<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot",     est.para=control.errorest(nboot = 50), ile.sasiadow=15)
+i
+```
+
+
+
+```{r , warning=FALSE, eval=TRUE}
+set.seed(124)
+liczba.sasiadow.zakres <- 1:15
+wyniki1 <-  sapply(liczba.sasiadow.zakres, function(k)
+errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="boot", est.para=control.errorest(nboot=50), ile.sasiadow=k)$error)
+plot(liczba.sasiadow.zakres, type="b", wyniki1, lwd=2,col="orchid1", main="wpływ liczby sąsiadów na błąd klasyfikacji", xlab="k (liczba sąsiadów)", ylab="błąd klasyfikacji")
+```
+
+Odnotowujemy spadek wartości błędu klasyfikacji ze wsrostem liczby sąsiadów, od liczby sąsiadów 14 nasz wykres przybiera tendencję rosnącą co może znaczyć, że dla dużej liczby sąsiadów 35-50 błąd klasyfikacji ponownie wzrośnie.
+
+***Schemat "632+"***
+
+Dla 3 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+s<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50), ile.sasiadow=3)
+s
+```
+
+Dla 7 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+l<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot = 50), ile.sasiadow=7)
+l
+```
+
+Dla 11 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+m<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot = 50), ile.sasiadow=11)
+m
+```
+
+Dla 15 sąsiadów
+
+```{r , warning=FALSE, eval=TRUE}
+
+n<-errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus",     est.para=control.errorest(nboot = 50), ile.sasiadow=15)
+n
+```
+
+
+```{r , warning=FALSE, eval=TRUE}
+set.seed(124)
+liczba.sasiadow.zakres <- 1:15
+wyniki1 <-  sapply(liczba.sasiadow.zakres, function(k)
+errorest(diabetes ~., datas, model=my.ipredknn, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot=50), ile.sasiadow=k)$error)
+plot(liczba.sasiadow.zakres, type="b", wyniki1, lwd=2,col="orchid1", main="wpływ liczby sąsiadów na błąd klasyfikacji", xlab="k (liczba sąsiadów)", ylab="błąd klasyfikacji")
+```
+ 
+ Najgorsze wyniki tzn. największy błąd klasyfikacji ponownie zauważamy dla niewielkich liczb sąsiadów.
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=c(paste0(round(c(a$error),4)*100,"%"),paste0(round(c(b$error),4)*100,"%"),paste0(round(c(c$error),4)*100,"%"),paste0(round(c(d$error),4)*100,"%")),
+  
+kolumna2=c(paste0(round(c(f$error),4)*100,"%"),paste0(round(c(g$error),4)*100,"%"),paste0(round(c(h$error),4)*100,"%"),paste0(round(c(i$error),4)*100,"%")),
+kolumna3=c(paste0(round(c(s$error),4)*100,"%"),paste0(round(c(l$error),4)*100,"%"),paste0(round(c(m$error),4)*100,"%"),paste0(round(c(n$error),4)*100,"%")))
+rownames(tabela)<-c("3","7","11","15")
+kable(tabela, caption = "Błąd klasyfikacyjny algorytmu KNN w zależności od liczby sąsiadów", col.names=c("Liczba sąsiadów","cross-validation","bootstrap","632+"))
+```
+
+Dla porównywanych parametrów najlepszy wynik - tzn. najmnijeszy błąd klasyfikacji otrzymujemy dla liczby sąsiadów równej 15 i shcmeatu cross-validation. Największy natomiast dla liczby sąsiadów równej 3 i schematu typu bootstrap. Interesującym wnioskiem jest też, że patrząc na kolumny danych schematów odnotowujemy spadki wartości błędów klasyfikacyjnych (w badanym zakresie liczby sąsiadów 1-15, dla wartości 35-50 ten błąd ponownie być może by wzrastał) im wyższa jest liczba sąsiadów
+
+
+### Algorytm drzew klasyfikacyjnych w zależności od parametrów cp, minsplit oraz maxdepth
+
+***Algorytm drzew klasyfikacyjnych***
+
+Będę porównywać parametry cp, minsplit oraz maxdepth
+
+***Schemat cross-validation***
+
+cp=0.001
+minsplit=2
+maxdepth=30
+
+```{r , warning=FALSE, eval=TRUE}
+a<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=2, cp=0.001, maxdepth = 30))}, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+a
+```
+
+cp=0.01
+minsplit=20
+maxdepth=5
+
+```{r , warning=FALSE, eval=TRUE}
+b<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=20, cp=0.01, maxdepth = 5))}, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+b
+```
+
+
+cp=0.1
+minsplit=60
+maxdepth=2
+
+```{r , warning=FALSE, eval=TRUE}
+c<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=60, cp=0.1, maxdepth = 2))}, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+c
+```
+
+***Schemat typu bootstrap***
+
+cp=0.001
+minsplit=2
+maxdepth=30
+
+```{r , warning=FALSE, eval=TRUE}
+d<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=2, cp=0.001, maxdepth = 30))}, predict=my.predict, estimator="boot", est.para=control.errorest(nboot = 50))
+d
+```
+
+cp=0.01
+minsplit=20
+maxdepth=5
+
+```{r , warning=FALSE, eval=TRUE}
+e<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=20, cp=0.01, maxdepth = 5))}, predict=my.predict, estimator="boot", est.para=control.errorest(nboot = 50))
+e
+```
+
+
+cp=0.1
+minsplit=60
+maxdepth=2
+
+```{r , warning=FALSE, eval=TRUE}
+f<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=60, cp=0.1, maxdepth = 2))}, predict=my.predict, estimator="boot", est.para=control.errorest(nboot = 50))
+f
+```
+
+
+***Schemat "632+"***
+
+cp=0.001
+minsplit=2
+maxdepth=30
+
+```{r , warning=FALSE, eval=TRUE}
+g<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=2, cp=0.001, maxdepth = 30))}, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50))
+g
+```
+
+cp=0.01
+minsplit=20
+maxdepth=5
+
+```{r , warning=FALSE, eval=TRUE}
+h<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=20, cp=0.01, maxdepth = 5))}, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50))
+h
+```
+
+
+cp=0.1
+minsplit=60
+maxdepth=2
+
+```{r , warning=FALSE, eval=TRUE}
+i<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    rpart(formula = formula,data = data,method="class",control=rpart.control(minsplit=60, cp=0.1, maxdepth = 2))}, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50))
+i
+```
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=c(paste0(round(c(a$error),4)*100,"%"),paste0(round(c(b$error),4)*100,"%"),paste0(round(c(c$error),4)*100,"%")),
+kolumna2=c(paste0(round(c(d$error),4)*100,"%"),paste0(round(c(e$error),4)*100,"%"),paste0(round(c(f$error),4)*100,"%")),
+kolumna3=c(paste0(round(c(g$error),4)*100,"%"),paste0(round(c(h$error),4)*100,"%"),paste0(round(c(i$error),4)*100,"%")))
+rownames(tabela)<-c("cp=0.001, minsplit=2, maxdepth=30","cp=0.01, minsplit=20, maxdepth=5","cp=0.1, minsplit=60, maxdepth=2")
+kable(tabela, caption = "Błąd klasyfikacyjny algorytmu drzew klasyfikacyjnych w zależności od cp, maxdepth, minsplit", col.names=c("parametry","cross-validation","bootstrap","632+"))
+```
+
+Dla parametrów  cp=0.001, minsplit=2, maxdepth=30 najlepszy wynik otrzymujemy używając schematu 632+.
+Dla parametrów   cp=0.01, minsplit=20, maxdepth=5 najlepszy wynik otrzymujemy używając schematu 632+.
+Dla parametrów  cp=0.1, minsplit=60, maxdepth=2 najlepszy wynik otrzymujemy używając schematu cross-validation.
+
+Ogólnie możemy wysunąć wnioski, że najlepszy dobór parametrów to cp=0.001, minsplit=2, maxdepth=30 w połączeniu ze schematem 632+. Najgorszym możliwym połączeniem jest schemat typu bootstrap i parametry  cp=0.1, minsplit=60, maxdepth=2.
+
+### Algorytm naiwnnego klasyfikatora bayesowskiego w zależności od laplace i 
+
+***Algorytm naiwnnego klasyfikatora bayesowskiego***
+
+Będę porównywać parametry laplace, usekernel, adjust
+
+***Schemat cross-validation***
+
+laplace=0 
+
+usekernel=FALSE 
+
+adjust=1
+
+```{r , warning=FALSE, eval=TRUE}
+a<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=0 ,usekernel=FALSE, adjust=1 )}, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+a
+```
+
+laplace=1
+
+usekernel=FALSE 
+
+adjust=1
+
+```{r , warning=FALSE, eval=TRUE}
+b<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=1 ,usekernel=FALSE, adjust=1)}, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+b
+```
+
+laplace=1
+
+usekernel=TRUE
+
+adjust=1.5
+
+```{r , warning=FALSE, eval=TRUE}
+c<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=1 ,usekernel=TRUE, adjust=1.5 )}, predict=my.predict, estimator="cv", est.para=control.errorest(k = 10))
+c
+```
+
+***Schemat typu bootstrap***
+
+laplace=0 
+
+usekernel=FALSE 
+
+adjust=1
+
+```{r , warning=FALSE, eval=TRUE}
+d<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=0 ,usekernel=FALSE, adjust=1 )}, predict=my.predict, estimator="boot", est.para=control.errorest(nboot = 50))
+d
+```
+
+laplace=1
+
+usekernel=FALSE 
+
+adjust=1
+
+```{r , warning=FALSE, eval=TRUE}
+e<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=1 ,usekernel=FALSE, adjust=1 )}, predict=my.predict, estimator="boot", est.para=control.errorest(nboot = 50))
+e
+```
+
+laplace=1
+
+usekernel=TRUE
+
+adjust=1.5
+
+```{r , warning=FALSE, eval=TRUE}
+f<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=1 ,usekernel=TRUE, adjust=1.5 )}, predict=my.predict, estimator="boot", est.para=control.errorest(nboot = 50))
+f
+```
+
+***Schemat "632+"***
+
+laplace=0 
+
+usekernel=FALSE 
+
+adjust=1
+
+```{r , warning=FALSE, eval=TRUE}
+g<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=0 ,usekernel=FALSE, adjust=1 )}, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50))
+g
+```
+
+laplace=1
+
+usekernel=FALSE 
+
+adjust=1
+
+```{r , warning=FALSE, eval=TRUE}
+h<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=1 ,usekernel=FALSE, adjust=1 )}, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50))
+h
+```
+
+laplace=1
+
+usekernel=TRUE
+
+adjust=1.5
+
+```{r , warning=FALSE, eval=TRUE}
+i<-errorest(diabetes ~., data[,-c(1,3,4,7)], model=function(formula, data) {
+    naiveBayes(formula = formula,data = data, laplace=1 ,usekernel=TRUE, adjust=1.5 )}, predict=my.predict, estimator="632plus", est.para=control.errorest(nboot = 50))
+i
+```
+
+***Wnioski***
+
+
+```{r , warning=FALSE, eval=TRUE}
+tabela<-data.frame(kolumna1=c(paste0(round(c(a$error),4)*100,"%"),paste0(round(c(b$error),4)*100,"%"),paste0(round(c(c$error),4)*100,"%")),
+kolumna2=c(paste0(round(c(d$error),4)*100,"%"),paste0(round(c(e$error),4)*100,"%"),paste0(round(c(f$error),4)*100,"%")),
+kolumna3=c(paste0(round(c(g$error),4)*100,"%"),paste0(round(c(h$error),4)*100,"%"),paste0(round(c(i$error),4)*100,"%")))
+rownames(tabela)<-c("laplace=0 ,usekernel=FALSE, adjust=1","laplace=1 ,usekernel=FALSE, adjust=1","laplace=1 ,usekernel=TRUE, adjust=1.5")
+kable(tabela, caption = "Błąd klasyfikacyjny algorytmu naiwnego klasyfikatora bayesowskiego zależności od laplace, usekernel, adjust", col.names=c("parametry","cross-validation","bootstrap","632+"))
+```
+
+Dla parametrów laplace=0 ,usekernel=FALSE, adjust=1 najlepszy wynik otrzymujemy używając schematu 632+. Dla parametrów laplace=1 ,usekernel=FALSE, adjust=1, maxdepth=5 najlepszy wynik otrzymujemy używając schematu 632+. Warto podkreślić, że dla metody cross-validation i bootstrap przy zadanych parametrach otrzymujemy identyczne miejsca co do zaokrągleń do dwóch miejsc po przecinku.
+Dla parametrów laplace=1 ,usekernel=TRUE, adjust=1.5 najlepszy wynik otrzymujemy używając schematu cross-validation.
+
+Ciekawą oberwacją jest, że niezależnie odoboru parametrów oraz schematów otrzymujemy wyniki z zakresu wartości od 23.18%-23.83%. Z czego 3 wyniki są identyczne co do 2 cyfr znaczących po przecinku:
+
+ laplace=0 ,usekernel=FALSE, adjust=1 cross-validation
+ laplace=1 ,usekernel=FALSE, adjust=1 cross-validation
+ laplace=1 ,usekernel=FALSE, adjust=1 bootstrap
+
+
+
+### Wnioski 
+
+## f) Końcowe wnioski - podsumowanie analizy porównawczej metod klasyfikacji 
+
+* Algorytm KNN:
+
+najlepszym parametrem k (liczby sąsiadów) okazała się liczba 15 dla podzbioru nie zawierającego triceps, pedigree, pregnant, pressure.
+
+* Algorytm drzew klasyfikacyjnych:
+
+najlepszy wynik otrzymaliścy przy parametrach domyślnych i testując cały zbiór danych na schemacie cross-validation.
+
+* Naiwyny algorytm bayesowski:
+
+najlepszym doborem parametrów okazało się  laplace=1 ,usekernel=TRUE, adjust=1.5 oraz schemat cross-validation dla podzbioru nie zawierającego triceps, pedigree, pregnant, pressure.
+
+
+ * Ogólniej: 
+ 
+Najlepiej radził sobie schemat 632+ oraz cross-validation niezależnie od dobranego algorytmu. 
+
+Najmniejszą zmienność jeśli chodzi o wyniki otrzymaliśmy testując algorytm naiwnego bayesa bez względu na schemat. Nie były to najlepsze z możliwych wyników - błąd klasyfikacyjny był dość wysoki w porównaiu z innymi wartościami. 
+
+Najlepiej wypadł algorytm drzew klasyfikacyjnych na całym zbiorze, dla każdego schematu. Na zbiorze uczącym zwrócił najmniejszy błąd klasyfikacyjny. Na zbiorze nie zawierającym zmiennych triceps, pedigree, pregnant, pressure również osiągnał możliwie najmniejsze błedy dla każdego z schematów: cross-validation, bootstrap, 632+.
+

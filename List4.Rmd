@@ -1,0 +1,288 @@
+---
+title: "lista 4"
+author: "Marta Hałas"
+date: "2025-06-06"
+output:
+  pdf_document:
+    number_sections: true
+    toc: true
+    toc_depth: 3
+  word_document:  
+    toc: true
+    number_sections: true
+  html_document:
+    toc: true
+    df_print: paged
+    number_sections: true
+lang: pl
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+set.seed(124)
+```
+
+```{r wyniki,echo=FALSE, warning=FALSE,eval=TRUE,message=FALSE,}
+library(ipred)
+library(rpart)
+library(rpart.plot)
+library(mlbench)
+library(randomForest)
+library(VIM)
+library(DataExplorer)
+
+data("PimaIndiansDiabetes2")
+data<-PimaIndiansDiabetes2
+data<-kNN(data,variable=colnames(data),k=5,imp_var = FALSE)
+barplot(prop.table(table(data$diabetes)), col=c("orchid2","lightblue3"), main="Dane PimiaIndiansdiabetes2 - rozkład klas")
+grid()
+
+
+
+# PCA (wizualizacja danych w 2D)
+pima.pca <- prcomp(data[,-9], center=T, scale=T)
+summary(pima.pca)
+### komenarz 
+
+plot(pima.pca$x[,1:3], col=data$diabetes, main="Dane Pima - wykres na bazie PCA", pch=15, cex=0.7)
+legend("topright", col=1:9, legend=levels(data$diabetes), pch=15, bg="azure2")
+
+pairs(pima.pca$x[,1:4], col=as.numeric(data$diabetes)+1, pch=16,
+      main="PCA: PC1 do PC4 – wykresy par")
+
+library(GGally)
+df.pca <- as.data.frame(pima.pca$x[,1:4])
+df.pca$diabetes <- as.factor(data$diabetes)
+ggpairs(df.pca, aes(color=diabetes))
+
+variables <- get_pca_var(pima.pca)
+
+plot_boxplot(data, by="diabetes", geom_boxplot_args = list(
+fill = "orchid2"))
+```
+
+
+
+# Zadanie 1 
+
+## a) Zaawansowane metody klasyfikacji
+
+### O czym będzie analiza? Jakich danych będą analizowane?
+
+
+
+### Cel i opis analizy
+
+## b) Rodziny klasyfikatorów, uczenie zespołowe - zastosowanie algorytmów
+
+***Drzewo klasyfikacyjne***
+
+```{r , warning=FALSE, eval=TRUE}
+tree <- rpart(diabetes~., data=data)
+rpart.plot(tree, box.palette = "PuBu",main="Drzewo klasyfikacyjne - dane PimaIndiansdiabetes2", cex=.5)
+```
+
+### Metoda bagging
+
+***Metoda bagging***
+
+
+***Zbiór uczący***
+
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(20,50,100)
+errors <- sapply(B.vector, function(b) {
+  model <- bagging(diabetes~., data=data, nbagg=b, minsplit=1, cp=0, coob=TRUE)
+  model$err})
+
+#BŁADDDDDDDD
+
+plot(B.vector, errors, type="b", xlab="Liczba drzew", ylab="Błąd OOB", main="Bagging - błąd OOB")
+grid()
+```
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+bagging.error.rates <- sapply(B.vector, function(b)  { errorest(diabetes~., data=data, model=bagging, nbagg=b, estimator="632plus", est.para=control.errorest(nboot = 20))$error})
+plot(B.vector, bagging.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+grid()
+```
+
+***schemat bootstrap***
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+boot.error.rates <- sapply(B.vector, function(b)  { errorest(diabetes~., data=data, model=bagging, nbagg=b, estimator="boot", est.para=control.errorest(nboot = 20))$error})
+plot(B.vector, bagging.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+grid()
+```
+***Schemat cross-validation***
+
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+cv.error.rates <- sapply(B.vector, function(b) { errorest(diabetes~., data=data, model=bagging, nbagg=b, estimator="cv", est.para=control.errorest(k=10))$error})
+plot(B.vector, bagging.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+grid()
+```
+
+***Wnioski***
+```{r , warning=FALSE, eval=TRUE}
+plot(B.vector, bagging.error.rates, type="b", col="orchid2", ylim=c(0, max(bagging.error.rates, boot.error.rates, cv.error.rates)), xlab="B", ylab="Error", main="Bagging: error vs B for different estimators")
+lines(B.vector, boot.error.rates, type="b", col="lightblue3")
+lines(B.vector, cv.error.rates, type="b", col="darkorchid3")
+legend("topright", legend=c("632plus", "boot", "cv"), col=c("orchid2", "lightblue3", "darkorchid3"), lty=1, pch=1)
+grid()
+```
+
+
+### Metoda random forest 
+
+***Metoda forest***
+
+
+***Zbiór uczący***
+
+```{r , warning=FALSE, eval=TRUE}
+p <-  ncol(data)-1 
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+
+randomforest <- sapply(B.vector, function(b) {
+  model <- randomForest(diabetes ~ ., data = data,
+                        ntree = b, mtry = floor(sqrt(p)))
+  tail(model$err.rate[, "OOB"], 1)
+})
+
+plot(B.vector, randomforest, type = "b", pch = 16, col = "orchid3",
+     xlab = "Liczba drzew", ylab = "Błąd OOB",
+     main = "Random Forest: Błąd OOB vs. liczba drzew")
+grid()
+
+
+rf.2 <- randomForest(diabetes~., data=data, ntree=100, mtry=sqrt(p), importance=TRUE)
+a<-rf.2$err.rate
+rf.2$confusion
+plot(rf.2)
+
+```
+
+# Ranking ważności cech
+varImpPlot(rf.2,main = "Variable Importance Plot")
+
+***Schemat "632+"***
+
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+forest.error.rates <- sapply(B.vector, function(b)  { errorest(diabetes~., data=data, model=randomForest, ntree=b, estimator="632plus", est.para=control.errorest(nboot = 20))$error})
+plot(B.vector, forest.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+grid()
+```
+
+
+***Schemat typu bootstrap***
+
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+forestboot.error.rates <- sapply(B.vector, function(b)  { errorest(diabetes~., data=data, model=randomForest, ntree=b, estimator="boot", est.para=control.errorest(nboot = 20))$error})
+plot(B.vector, forest.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+grid()
+```
+
+***Schemat cross-validation***
+```{r , warning=FALSE, eval=TRUE}
+B.vector <- c(1, 5, 10, 20, 30, 40, 50, 100)
+forestcv.error.rates <- sapply(B.vector, function(b)  { errorest(diabetes~., data=data, model=randomForest, ntree=b, estimator="cv", est.para=control.errorest(k=10))$error})
+plot(B.vector, forest.error.rates, xlab="B", main="Bagging: error rate vs. B", type="b")
+grid()
+```
+
+
+# ranking cech - wykres VIM 
+
+***Wnioski***
+
+```{r , warning=FALSE, eval=TRUE}
+plot(B.vector, forest.error.rates, type="b", col="orchid2", ylim=c(0, max(forest.error.rates, forestboot.error.rates, forestcv.error.rates)), xlab="B", ylab="Error", main="Bagging: error vs B for different estimators")
+lines(B.vector, forestboot.error.rates, type="b", col="lightblue3")
+lines(B.vector, forestcv.error.rates, type="b", col="darkorchid3")
+legend("topright", legend=c("632plus", "boot", "cv"), col=c("orchid2", "lightblue3", "darkorchid3"), lty=1, pch=1)
+grid()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r , warning=FALSE, eval=TRUE}
+
+mypredict.rpart <- function(object, newdata)  predict(object, newdata=newdata, type="class")
+
+(error.tree         <- (errorest(diabetes~., data=data, model=rpart, predict=mypredict.rpart,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20))))
+(error.bagging      <- (errorest(diabetes~., data=data, model=bagging,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20))))
+(error.randomForest <- (errorest(diabetes~., data=data, model=randomForest,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20))))
+
+# Względna redukcja błędu klasyfikacji (w %)
+(error.tree$error - error.bagging$error)/error.tree$error*100        # bagging vs. single tree
+(error.tree$error - error.randomForest$error)/error.tree$error*100   # random forest vs. single tree
+```
+
+### Wnioski
+
+```{r , warning=FALSE, eval=TRUE}
+
+mypredict.rpart <- function(object, newdata)  predict(object, newdata=newdata, type="class")
+
+(error.tree         <- (errorest(diabetes~., data=data, model=rpart, predict=mypredict.rpart,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20))))
+(error.bagging      <- (errorest(diabetes~., data=data, model=bagging,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20))))
+(error.randomForest <- (errorest(diabetes~., data=data, model=randomForest,
+                                 estimator="632plus", est.para=control.errorest(nboot = 20))))
+
+# Względna redukcja błędu klasyfikacji (w %)
+(error.tree$error - error.bagging$error)/error.tree$error*100        # bagging vs. single tree
+(error.tree$error - error.randomForest$error)/error.tree$error*100   # random forest vs. single tree
+```
+
+## c) Metoda wektorów nośnych (SVM)
+
+### Klasyfikatory dla funkcji jądrowych - porównanie skuteczności
+
+***Algorytm SVM***
+
+```{r , warning=FALSE, eval=TRUE}
+
+```
+
+***Wnioski***
+
+### "Dostrojenie" parametrów $\gamma$ i $C$ dla jądra radialnego
+
+
+```{r , warning=FALSE, eval=TRUE}
+
+```
+
+***Wnioski***
+
+### Wnioski 
+
+
+## d) Wnioski - porównanie skuteczności metod na podstawie podpunktu b, c
+
+
